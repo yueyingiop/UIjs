@@ -1,0 +1,33 @@
+modLoader="javafml"  # mod加载器,必填
+loaderVersion="[47,)"  # mod加载器版本,必填
+license="All rights reserved"  # 许可证,必填
+
+[[mods]]  # mod信息,必填
+modId="ui_js"  # modid,必填
+version="0.0.1"  # mod版本,必填
+displayName="UIJS"  # mod显示名称,必填
+# logoFile="pack.png"  # mod图标,选填
+authors="yueyingiop"  # mod作者,选填
+description='''
+使用JavaScript编写UI界面的模组
+'''  # mod描述,必填
+
+[[dependencies.ui_js]]  # mod依赖,选填
+    modId="forge"  # 依赖的modid,必填
+    mandatory=true  # 是否必须,必填
+    versionRange="[47.4.0,)"  # 依赖的版本范围,必填
+    ordering="NONE"  # 排序,选填
+    side="BOTH"  # 端,选填
+
+[[dependencies.ui_js]]
+    modId="minecraft"
+    mandatory=true
+    versionRange="[1.20.1,)"
+    ordering="NONE"
+    side="BOTH" 
+[[dependencies.ui_js]]
+   modId="kubejs"
+   mandatory=true
+   versionRange="[2001.6.5-build.16,)"
+   ordering="NONE"
+   side="BOTH"
