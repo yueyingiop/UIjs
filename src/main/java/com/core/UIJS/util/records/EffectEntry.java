@@ -1,4 +1,4 @@
-package com.core.UIJS.kubejs;
+package com.core.UIJS.util.records;
 
 import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffectInstance;

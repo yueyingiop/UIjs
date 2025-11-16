@@ -1,28 +1,28 @@
 package com.core.UIJS;
 
+import org.apache.commons.lang3.tuple.Pair;
+
 import net.minecraftforge.common.ForgeConfigSpec;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.fml.event.config.ModConfigEvent;
 
-
-// An example config class. This is not required, but it's a good idea to have one to keep your config organized.
-// Demonstrates how to use Forge's config APIs
-@Mod.EventBusSubscriber(modid = UIJS.MODID, bus = Mod.EventBusSubscriber.Bus.MOD)
-public class Config
-{
-    private static final ForgeConfigSpec.Builder BUILDER = new ForgeConfigSpec.Builder();
-
-   
-
-    static final ForgeConfigSpec SPEC = BUILDER.build();
-
-
-
-
-    @SubscribeEvent
-    static void onLoad(final ModConfigEvent event)
-    {
-
+public class Config {
+    public static final ForgeConfigSpec SPEC;
+    public static final Config INSTANCE;
+    
+    static {
+        Pair<Config, ForgeConfigSpec> specPair = new ForgeConfigSpec.Builder().configure(Config::new);
+        SPEC = specPair.getRight();
+        INSTANCE = specPair.getLeft();
+    }
+    
+    public final ForgeConfigSpec.ConfigValue<String> mcmlDirectory;
+    
+    public Config(ForgeConfigSpec.Builder builder) {
+        builder.comment("UIJS Configuration").push("uijs");
+        
+        mcmlDirectory = builder
+            .comment("Directory where MCML files are stored")
+            .define("mcmlDirectory", "kubejs/mcml");
+        
+        builder.pop();
     }
 }

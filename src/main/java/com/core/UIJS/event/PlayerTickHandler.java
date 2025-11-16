@@ -5,8 +5,10 @@ import java.util.Map;
 import java.util.UUID;
 
 import com.core.UIJS.UIJS;
+import com.core.UIJS.kubejs.ArmorSet;
 import com.core.UIJS.kubejs.ArmorSetRegistry;
 
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.event.TickEvent.Phase;
 import net.minecraftforge.event.TickEvent.PlayerTickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -27,6 +29,14 @@ public class PlayerTickHandler {
             if (tickCounter >= 20) {
                 ArmorSetRegistry.checkPlayerEquipment(event.player);
                 playerTickCounters.put(playerId, 0);
+            }
+
+            // 执行所有 armor set 的 tick 回调
+            for (Map.Entry<String, ArmorSet> entry : ArmorSetRegistry.getArmorSets().entrySet()){
+                ArmorSet set = entry.getValue();
+                if (event.player instanceof ServerPlayer serverPlayer) {
+                    set.onTick(serverPlayer);
+                }
             }
         }
     }

@@ -13,6 +13,12 @@ plugins {
     id 'idea'
     id 'maven-publish'
     id 'net.minecraftforge.gradle' version '[6.0,6.2)'
+    id 'org.spongepowered.mixin' version '0.7.+'
+}
+
+mixin {
+    add sourceSets.main, "ui_js.refmap.json"
+    config 'mixin.ui_js.json'
 }
 
 apply plugin: 'org.spongepowered.mixin'
@@ -108,6 +114,12 @@ repositories {
         name = "ModMaven"
         url = "https://modmaven.dev"
     }
+
+    // 添加库: Curios API
+    maven {
+        name = "Illusive Soulworks maven"
+        url = "https://maven.theillusivec4.top/"
+    }
 }
 
 dependencies {
@@ -126,6 +138,10 @@ dependencies {
     compileOnly(fg.deobf("mezz.jei:jei-${minecraft_version}-common-api:${jei_version}"))
     compileOnly(fg.deobf("mezz.jei:jei-${minecraft_version}-forge-api:${jei_version}"))
     runtimeOnly(fg.deobf("mezz.jei:jei-${minecraft_version}-forge:${jei_version}"))
+
+    // 使用 Curios
+    compileOnly(fg.deobf("top.theillusivec4.curios:curios-forge:${curios_version}:api"))
+    runtimeOnly(fg.deobf("top.theillusivec4.curios:curios-forge:${curios_version}"))
 
     // 使用 Mixin
     implementation 'org.spongepowered:mixin:0.8.5'
