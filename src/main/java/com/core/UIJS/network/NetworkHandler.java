@@ -42,6 +42,12 @@ public class NetworkHandler {
             InventorySyncPacket::decode, 
             InventorySyncPacket::handle
         );
+        INSTANCE.registerMessage(
+            packetId++, RecipeSyncPacket.class,
+            RecipeSyncPacket::encode, 
+            RecipeSyncPacket::decode, 
+            RecipeSyncPacket::handle
+        );
     }
 
     public static void sendToServer(Object packet) {

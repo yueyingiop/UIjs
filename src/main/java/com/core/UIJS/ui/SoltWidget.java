@@ -1,6 +1,16 @@
 package com.core.UIJS.ui;
 
+import java.util.HashMap;
+import java.util.Map;
+
+import com.core.UIJS.UIJS;
 import com.core.UIJS.mcml.MCMLNode;
+import com.core.UIJS.network.NetworkHandler;
+import com.core.UIJS.network.SlotSyncPacket;
+import com.core.UIJS.recipe.BlockBoundRecipeManager;
+import com.core.UIJS.recipe.RecipeManager;
+import com.core.UIJS.recipe.RecipeSystem;
+import com.core.UIJS.storage.BlockBoundSlotDataManager;
 import com.core.UIJS.storage.SlotDataManager;
 import com.core.UIJS.util.ItemInteractionHelper;
 import com.core.UIJS.util.UIRenderHelper;
@@ -10,6 +20,7 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.narration.NarratedElementType;
 import net.minecraft.client.gui.narration.NarrationElementOutput;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
@@ -21,16 +32,24 @@ public class SoltWidget extends AbstractWidget {
     private final MCMLNode node;
     private ItemStack itemStack = ItemStack.EMPTY; // 当前物品堆栈
 
+    private final String blockKey; // 绑定的方块键
+
     public SoltWidget(int x, int y, int width, int height, int order, String bindGroup, MCMLNode node) {
+        this(x, y, width, height, order, bindGroup, node, null);
+    }
+
+    public SoltWidget(int x, int y, int width, int height, int order, String bindGroup, MCMLNode node, String blockKey) {
         super(x, y, width, height, Component.literal("Solt"));
         this.order = order;
         this.bindGroup = bindGroup;
         this.node = node;
+        this.blockKey = blockKey;
         this.minecraft = Minecraft.getInstance();
 
         loadItemFromStorage();
     }
 
+    // 渲染组件
     @Override
     public void renderWidget(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTicks) {
         String backgroundColorStr = node.getAttributeOrStyle("backgroundColor");
@@ -63,6 +82,7 @@ public class SoltWidget extends AbstractWidget {
         // 渲染物品
         UIRenderHelper.renderItemInSlot(guiGraphics, itemStack, getX(), getY(), width, height);
         
+
         // 渲染顺序编号
         if (order >= 0) {
             int textX = getX() + width - 8;  // 距离右边8px
@@ -81,6 +101,7 @@ public class SoltWidget extends AbstractWidget {
             );
         }
 
+        // 渲染hover
         String hoverImage = node.getAttributeOrStyle("hoverImage");
         if (hoverImage != null && !hoverImage.isEmpty() && ItemInteractionHelper.isMouseOverSlot(mouseX, mouseY, getX(), getY(), width, height)) {
             if (UIRenderHelper.isHttpUrl(hoverImage)) {
@@ -98,8 +119,12 @@ public class SoltWidget extends AbstractWidget {
             UIRenderHelper.renderHover(guiGraphics, getX(), getY(), width, height, mouseX, mouseY, hoverCoverColor, hoverBorderColor);
         }
         
+
+        // 渲染配方进度
+        renderRecipeProgress(guiGraphics, mouseX, mouseY);
     }
 
+    // 渲染纯色背景
     private void renderSolidBackground(GuiGraphics guiGraphics, int backgroundColor, int borderColor){
         // 渲染插槽背景
         guiGraphics.fill(
@@ -116,14 +141,95 @@ public class SoltWidget extends AbstractWidget {
         );
     }
 
+    // 渲染配方进度
+    private void renderRecipeProgress(GuiGraphics guiGraphics, int mouseX, int mouseY) {
+        if (!isRecipeSlot()) return;
+        
+        RecipeManager recipeManager = RecipeManager.getInstance();
+        RecipeSystem activeRecipe = recipeManager.getActiveRecipe(getBindGroup());
+        
+        // 检查配方是否活跃（包括后台处理）
+        boolean isProcessing = activeRecipe != null && 
+            (
+                activeRecipe.isProcessing() || 
+                recipeManager.isBackgroundProcessing(getBindGroup())
+            );
+        if (isProcessing) {
+            float progress = activeRecipe.getProgress();
+            int progressWidth = (int) (width * progress);
+            
+            // 渲染进度条背景
+            guiGraphics.fill(
+                getX(), getY() + height - 3,
+                getX() + width, getY() + height,
+                0x80000000
+            );
+            
+            // 渲染进度条
+            guiGraphics.fill(
+                getX(), getY() + height - 3,
+                getX() + progressWidth, getY() + height,
+                0xFF00FF00
+            );
+            
+            // 如果鼠标悬停，显示进度信息
+            if (isMouseOver(mouseX, mouseY)) {
+                String progressText = String.format("%.1f%%", progress * 100);
+                guiGraphics.renderTooltip(
+                    minecraft.font,
+                    Component.literal(progressText),
+                    mouseX, mouseY
+                );
+            }
+        }
+    }
+
      // 从存储加载物品
     private void loadItemFromStorage() {
-        this.itemStack = SlotDataManager.loadSlotData(getSlotKey());
+        String slotKey = getValidatedSlotKey();
+        if (blockKey != null && !blockKey.isEmpty()) {
+            // 加载方块特定的插槽数据
+            this.itemStack = BlockBoundSlotDataManager.loadBlockSlot(blockKey, slotKey);
+            UIJS.LOGGER.debug("Loaded block slot: {}/{} - {}", blockKey, slotKey, itemStack);
+        } else {
+            // 加载全局插槽数据
+            this.itemStack = SlotDataManager.loadSlotData(getSlotKey());
+            UIJS.LOGGER.debug("Loaded global slot: {} - {}", slotKey, itemStack);
+        }
     }
     
     // 保存物品到存储
     private void saveItemToStorage() {
-        SlotDataManager.saveSlotData(getSlotKey(), itemStack);
+        String slotKey = getValidatedSlotKey();
+        if (blockKey != null && !blockKey.isEmpty()) {
+            // 保存方块特定的插槽数据
+            BlockBoundSlotDataManager.saveBlockSlot(blockKey, slotKey, itemStack);
+            UIJS.LOGGER.debug("Saved block slot: {}/{} - {}", blockKey, slotKey, itemStack);
+            syncBlockSlotToServer(slotKey);
+        } else {
+            // 保存全局插槽数据
+            SlotDataManager.saveSlotData(getSlotKey(), itemStack, true);
+            UIJS.LOGGER.debug("Saved global slot: {} - {}", slotKey, itemStack);
+        }
+    }
+
+    private String getValidatedSlotKey() {
+        String type = getType();
+        String group = getBindGroup();
+        
+        // 验证并修复键格式
+        if (type == null || type.isEmpty()) {
+            type = "def";
+            UIJS.LOGGER.warn("Slot type is null or empty, using default: def");
+        }
+        
+        if (group == null || group.isEmpty()) {
+            group = "default";
+            UIJS.LOGGER.warn("Slot bindGroup is null or empty, using default: default");
+        }
+        
+        // 生成标准格式的键
+        return SlotDataManager.generateSlotKey(type, order, group);
     }
     
     //#region 鼠标事件
@@ -147,6 +253,11 @@ public class SoltWidget extends AbstractWidget {
         ItemStack carriedItem = player.containerMenu.getCarried();
 
         ItemInteractionHelper.InteractionResult result = null;
+
+        if (isOutputSlot()) {
+            handleOutputSlotInteraction(button, carriedItem, player);
+            return;
+        }
         
         // 左键点击
         if (button == 0) {
@@ -166,6 +277,9 @@ public class SoltWidget extends AbstractWidget {
                 
                 // 然后保存到存储（会自动同步到服务器）
                 saveItemToStorage();
+
+                // 检查配方状态
+                checkRecipeState();
                 
                 // 强制更新物品显示
                 player.containerMenu.broadcastChanges();
@@ -173,6 +287,61 @@ public class SoltWidget extends AbstractWidget {
             
         }
     }
+
+    /**
+     * 处理输出插槽的交互逻辑 - 只允许取出，不允许放入
+     */
+    private void handleOutputSlotInteraction(int button, ItemStack carriedItem, Player player) {
+        // 如果玩家手持物品，不允许放入输出插槽
+        if (!carriedItem.isEmpty()) return;
+
+        // 如果输出插槽为空，无操作
+        if (this.itemStack.isEmpty()) return;
+
+        ItemInteractionHelper.InteractionResult result = null;
+        
+        // 左键点击：取出所有物品
+        if (button == 0) {
+            result = handleOutputTakeAll();
+        }
+
+        if (result != null && result.isChanged()) {
+            // 验证变化是否合理
+            if (isValidItemChange(carriedItem, this.itemStack, result.getCarriedItem(), result.getSlotItem())) {
+                player.containerMenu.setCarried(result.getCarriedItem());
+                // 更新物品堆栈
+                this.itemStack = result.getSlotItem();
+                
+                // 保存到存储
+                saveItemToStorage();
+
+                checkRecipeState();
+                
+                // 强制更新物品显示
+                player.containerMenu.broadcastChanges();
+            }
+        }
+    }
+
+    /**
+     * 输出插槽：取出所有物品
+     */
+    private ItemInteractionHelper.InteractionResult handleOutputTakeAll() {
+        ItemInteractionHelper.InteractionResult result = new ItemInteractionHelper.InteractionResult(
+            ItemStack.EMPTY, this.itemStack
+        );
+        
+        result.setCarriedItem(this.itemStack.copy());
+        result.setSlotItem(ItemStack.EMPTY);
+        result.setChanged(true);
+
+        Minecraft.getInstance().execute(() -> {
+            checkRecipeState();
+        });
+        
+        return result;
+    }
+
 
     /**
      * 验证物品变化是否合理
@@ -184,22 +353,18 @@ public class SoltWidget extends AbstractWidget {
         int newTotal = newCarried.getCount() + newSlot.getCount();
         
         if (originalTotal != newTotal) {
-            System.err.println("Item count mismatch detected: " + originalTotal + " -> " + newTotal);
             return false;
         }
 
         if (!newSlot.isEmpty() && newSlot.getCount() > newSlot.getMaxStackSize()) {
-            System.err.println("Slot item exceeds max stack size: " + newSlot.getCount());
             return false;
         }
         
         if (!newCarried.isEmpty() && newCarried.getCount() > newCarried.getMaxStackSize()) {
-            System.err.println("Carried item exceeds max stack size: " + newCarried.getCount());
             return false;
         }
         
         if (!areItemsCompatible(originalCarried, originalSlot, newCarried, newSlot)) {
-            System.err.println("Item type compatibility check failed");
             return false;
         }
         
@@ -272,10 +437,118 @@ public class SoltWidget extends AbstractWidget {
         narrationElementOutput.add(NarratedElementType.TITLE, narration);
     }
 
+    //#region 配方相关
     // 检查是否为配方插槽（非物品栏插槽）
     public boolean isRecipeSlot() {
         return !"inventory".equals(this.bindGroup);
     }
+
+    // 检查是否为输入插槽
+    public boolean isInputSlot() { return "input".equals(getType()); }
+    // 检查是否为输出插槽
+    public boolean isOutputSlot() { return "output".equals(getType()); }
+
+    // 检查并更新配方状态
+    private void checkRecipeState() {
+        if (!isRecipeSlot()) return;
+        
+        Object recipeManager = getCurrentRecipeManager();
+        String group = getBindGroup();
+        
+        Map<Integer, ItemStack> slotItems = getSlotItemsForGroup(group);
+        
+        RecipeSystem matchingRecipe = findMatchingRecipe(recipeManager, group, slotItems);
+        RecipeSystem activeRecipe = getActiveRecipe(recipeManager, group);
+        
+        if (matchingRecipe != null) {
+            if (activeRecipe == null) {
+                startRecipeProcessing(recipeManager, group, matchingRecipe);
+            } else if (activeRecipe != matchingRecipe) {
+                stopRecipeProcessing(recipeManager, group);
+                startRecipeProcessing(recipeManager, group, matchingRecipe);
+            }
+        } else {
+            if (activeRecipe != null) {
+                stopRecipeProcessing(recipeManager, group);
+            }
+
+        }
+
+    }
+
+    // 获取配方组的所有插槽物品
+    private Map<Integer, ItemStack> getSlotItemsForGroup(String group) {
+        Map<Integer, ItemStack> slotItems = new HashMap<>();
+        
+        // 尝试通过UIRenderer获取同组插槽
+        Screen currentScreen = Minecraft.getInstance().screen;
+        if (currentScreen instanceof UIRenderer uiRenderer) {
+            Map<Integer, SoltWidget> groupSlots = uiRenderer.getGroupSlots(group);
+            
+            for (Map.Entry<Integer, SoltWidget> entry : groupSlots.entrySet()) {
+                slotItems.put(entry.getKey(), entry.getValue().getItemStack());
+            }
+        } else {
+            // 回退方案：只包含当前插槽
+            slotItems.put(this.order, this.itemStack);
+        }
+        
+        return slotItems;
+    }
+
+    /**
+     * 同步方块插槽数据到服务器
+     */
+    private void syncBlockSlotToServer(String slotKey) {
+        Minecraft minecraft = Minecraft.getInstance();
+        Player player = minecraft.player;
+        if (player != null && blockKey != null) {
+            // 查找来源插槽
+            int sourceSlot = findSourceInventorySlot(player.containerMenu.getCarried());
+            
+            // 验证物品所有权
+            if (sourceSlot != -1) {
+                ItemStack currentItem = player.getInventory().getItem(sourceSlot);
+                if (!ItemStack.isSameItemSameTags(currentItem, player.containerMenu.getCarried())) {
+                    sourceSlot = -1;
+                }
+            }
+
+            // 发送方块特定的同步包
+            String fullSlotKey = "block_" + blockKey + "_" + slotKey;
+            NetworkHandler.sendToServer(new SlotSyncPacket(
+                fullSlotKey,
+                this.itemStack, 
+                player.containerMenu.getCarried(), 
+                player.getUUID(), 
+                sourceSlot
+            ));
+            
+            UIJS.LOGGER.debug("Synced block slot to server: {} - {}", fullSlotKey, this.itemStack);
+        }
+    }
+
+    // 添加查找来源插槽的方法
+    private int findSourceInventorySlot(ItemStack carriedItem) {
+        if (carriedItem.isEmpty()) return -1;
+        
+        Player player = Minecraft.getInstance().player;
+        if (player == null) return -1;
+        
+        // 查找物品栏中匹配的物品堆栈
+        for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
+            ItemStack stack = player.getInventory().getItem(i);
+            if (ItemStack.isSameItemSameTags(stack, carriedItem)) {
+                // 如果数量也匹配，优先返回
+                if (stack.getCount() == carriedItem.getCount()) {
+                    return i;
+                }
+            }
+        }
+        
+        return -1;
+    }
+    //#endregion
 
     //#region Getter & Setter
     public String getType() { return node.getAttribute("type") == null ? "def" : node.getAttribute("type"); }
@@ -292,8 +565,14 @@ public class SoltWidget extends AbstractWidget {
         return this.order;
     }
 
+    // 获取插槽键（仅用于全局插槽）
     private String getSlotKey() {
-        return getType() + "_" + order + "_" + bindGroup;
+        return SlotDataManager.generateSlotKey(getType(), order, bindGroup);
+    }
+
+    // 获取配方组键
+    public String getRecipeGroupKey() {
+        return getBindGroup() + "_" + getType();
     }
     //#endregion
 
@@ -307,4 +586,54 @@ public class SoltWidget extends AbstractWidget {
         return SlotDataManager.getSlotData(type, order, bindGroup);
     }
     
+
+    //#region 辅助方法
+    // 辅助方法：获取当前配方管理器
+    private Object getCurrentRecipeManager() {
+        Screen currentScreen = Minecraft.getInstance().screen;
+        if (currentScreen instanceof UIRenderer uiRenderer) {
+            return uiRenderer.getCurrentRecipeManager();
+        }
+        return RecipeManager.getInstance();
+    }
+    
+    // 辅助方法：查找匹配的配方
+    private RecipeSystem findMatchingRecipe(Object recipeManager, String group, Map<Integer, ItemStack> slotItems) {
+        if (recipeManager instanceof BlockBoundRecipeManager blockManager) {
+            return blockManager.findMatchingRecipe(group, slotItems);
+        } else if (recipeManager instanceof RecipeManager globalManager) {
+            return globalManager.findMatchingRecipe(group, slotItems);
+        }
+        return null;
+    }
+    
+    // 辅助方法：获取活跃配方
+    private RecipeSystem getActiveRecipe(Object recipeManager, String group) {
+        if (recipeManager instanceof BlockBoundRecipeManager blockManager) {
+            return blockManager.getActiveRecipe(group);
+        } else if (recipeManager instanceof RecipeManager globalManager) {
+            return globalManager.getActiveRecipe(group);
+        }
+        return null;
+    }
+    
+    // 辅助方法：启动配方处理
+    private void startRecipeProcessing(Object recipeManager, String group, RecipeSystem recipe) {
+        if (recipeManager instanceof BlockBoundRecipeManager blockManager) {
+            blockManager.startBackgroundProcessing(group, recipe);
+        } else if (recipeManager instanceof RecipeManager globalManager) {
+            globalManager.startBackgroundProcessing(group, recipe);
+        }
+    }
+    
+    // 辅助方法：停止配方处理
+    private void stopRecipeProcessing(Object recipeManager, String group) {
+        if (recipeManager instanceof BlockBoundRecipeManager blockManager) {
+            blockManager.stopRecipe(group);
+        } else if (recipeManager instanceof RecipeManager globalManager) {
+            globalManager.stopRecipe(group);
+        }
+    }
+
+    //#endregion
 }

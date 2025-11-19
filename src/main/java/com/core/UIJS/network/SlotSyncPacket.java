@@ -71,6 +71,13 @@ public class SlotSyncPacket {
 
     // 服务器处理
     private static void handleServerSide(ServerPlayer player, SlotSyncPacket packet) {
+        // 检查是否是方块插槽
+        if (packet.slotKey.startsWith("block_")) {
+            // 处理方块插槽同步
+            handleBlockSlotSync(player, packet);
+            return;
+        }
+        
         // 验证玩家是否真的有这些物品
         if (isValidTransaction(player, packet)) {
             // 更新服务器端的物品栏
@@ -144,5 +151,32 @@ public class SlotSyncPacket {
             }
         }
         return totalCount >= itemStack.getCount();
+    }
+
+    /**
+     * 处理方块插槽同步
+     */
+    private static void handleBlockSlotSync(ServerPlayer player, SlotSyncPacket packet) {
+        // 解析方块键和插槽键
+        String fullKey = packet.slotKey.substring(6); // 移除 "block_" 前缀
+        String[] parts = fullKey.split("_", 2);
+        if (parts.length < 2) return;
+        
+        String blockKey = parts[0];
+        String slotKey = parts[1];
+        
+        // 验证玩家身份
+        if (!player.getUUID().equals(packet.playerUUID)) {
+            return;
+        }
+        
+        // 保存到服务器存储 - 使用专门的方块数据保存方法
+        ServerSlotDataManager.saveBlockSlot(player, blockKey, slotKey, packet.slotItem);
+        
+        // 更新服务器端的手持物品状态
+        player.containerMenu.setCarried(packet.carriedItem);
+        
+        // 保存玩家数据
+        player.getInventory().setChanged();
     }
 }

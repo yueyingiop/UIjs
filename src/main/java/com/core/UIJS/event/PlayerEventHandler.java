@@ -25,9 +25,9 @@ public class PlayerEventHandler {
 
     @SubscribeEvent
     public static void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
-        if (event.getEntity() instanceof ServerPlayer serverPlayer) {
-            syncPlayerSlotData(serverPlayer);
-        }
+        // if (event.getEntity() instanceof ServerPlayer serverPlayer) {
+        //     syncPlayerSlotData(serverPlayer);
+        // }
     }
 
     @SubscribeEvent
@@ -60,11 +60,14 @@ public class PlayerEventHandler {
                 }
             }
             
+            // 获取方块插槽数据
+            CompoundTag blockSlotData = ServerSlotDataManager.getBlockSlotData(player);
+
             // 发送同步包到客户端
             if (!playerSlotData.isEmpty()) {
                 NetworkHandler.INSTANCE.send(
                     PacketDistributor.PLAYER.with(() -> player),
-                    new LoginSyncPacket(playerSlotData)
+                    new LoginSyncPacket(playerSlotData, blockSlotData)
                 );
             }
             

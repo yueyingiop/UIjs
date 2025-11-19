@@ -2,7 +2,6 @@ package com.core.UIJS;
 
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraftforge.common.MinecraftForge;
@@ -12,8 +11,6 @@ import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.config.ModConfig;
 import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
-import net.minecraftforge.network.NetworkRegistry;
-import net.minecraftforge.network.simple.SimpleChannel;
 import net.minecraftforge.registries.DeferredRegister;
 import net.minecraftforge.registries.RegistryObject;
 
@@ -22,6 +19,7 @@ import org.apache.logging.log4j.Logger;
 
 import com.core.UIJS.item.RegistryItem;
 import com.core.UIJS.network.NetworkHandler;
+import com.core.UIJS.recipe.GlobalRecipeCompletionHandler;
 
 @Mod(UIJS.MODID)
 public class UIJS 
@@ -48,8 +46,9 @@ public class UIJS
         RegistryItem.ITEMS.register(modEventBus);
         // CREATIVE_MODE_TABS.register(modEventBus);
         MinecraftForge.EVENT_BUS.register(this);
-
+        
         modEventBus.addListener(this::commonSetup);
+        GlobalRecipeCompletionHandler.getInstance();
 
         context.registerConfig(ModConfig.Type.COMMON, Config.SPEC);
     }

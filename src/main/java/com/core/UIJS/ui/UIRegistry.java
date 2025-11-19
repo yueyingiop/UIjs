@@ -129,6 +129,11 @@ public class UIRegistry {
         
         return BindingType.UNKNOWN;
     }
+
+    // 检查一个UI是否绑定了方块
+    public static boolean isBlockBoundUI(ResourceLocation uiId) {
+        return BLOCK_UI_BINDINGS.containsValue(uiId);
+    }
     
     // 清空注册表
     public static void clearRegistry() {

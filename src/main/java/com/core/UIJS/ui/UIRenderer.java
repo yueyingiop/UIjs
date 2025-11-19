@@ -3,6 +3,7 @@ package com.core.UIJS.ui;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -11,6 +12,10 @@ import java.util.regex.Pattern;
 import com.core.UIJS.Config;
 import com.core.UIJS.UIJS;
 import com.core.UIJS.mcml.MCMLNode;
+import com.core.UIJS.recipe.BlockBoundRecipeManager;
+import com.core.UIJS.recipe.RecipeManager;
+import com.core.UIJS.recipe.RecipeParser;
+import com.core.UIJS.recipe.RecipeSystem;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -24,12 +29,14 @@ import net.minecraft.client.gui.components.ImageWidget;
 import net.minecraft.client.gui.components.MultiLineEditBox;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.Style;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.ItemStack;
 
 // UI渲染器
-public class UIRenderer extends Screen {
+public class UIRenderer extends Screen implements RecipeManager.RecipeCompletionListener, RecipeManager.RecipeCompletionHandler {
     private final ResourceLocation uiId;
     private final MCMLNode uiRoot;
     private final List<AbstractWidget> widgets;
@@ -43,18 +50,46 @@ public class UIRenderer extends Screen {
     private boolean isNetworkBackgroundLoading = false;
     private long lastBackgroundCheckTime = 0;
 
-    
+    // 配方相关
+    private final RecipeManager recipeManager = RecipeManager.getInstance();
+    private final Map<String, Map<Integer, SoltWidget>> groupSlotsMap = new HashMap<>();
+    // 方块信息
+    private final BlockPos blockPos;
+    private final ResourceLocation dimension;
+    private final String blockKey;
+    private final BlockBoundRecipeManager blockRecipeManager;
+
+
     public UIRenderer(ResourceLocation uiId, MCMLNode uiRoot) {
+        this(uiId, uiRoot, null, null);
+    }
+
+    public UIRenderer(ResourceLocation uiId, MCMLNode uiRoot, BlockPos blockPos, ResourceLocation dimension) {
         super(Component.literal("MCML UI"));
         this.uiId = uiId;
         this.uiRoot = uiRoot;
         this.widgets = new ArrayList<>();
+        this.blockPos = blockPos;
+        this.dimension = dimension;
+        
+        // 如果是方块绑定的UI，创建独立的配方管理器
+        if (blockPos != null && dimension != null) {
+            this.blockKey = BlockBoundRecipeManager.createBlockKey(this.blockPos, this.dimension);
+            this.blockRecipeManager = BlockBoundRecipeManager.getInstance(blockKey);
+        } else {
+            this.blockKey = null;
+            this.blockRecipeManager = null;
+        }
+    }
+
+    public static void openUI(ResourceLocation uiId) {
+        openUI(uiId, null, null);
     }
     
-    public static void openUI(ResourceLocation uiId) {
+    public static void openUI(ResourceLocation uiId, BlockPos blockPos, ResourceLocation dimension) {
         MCMLNode uiNode = UIRegistry.getUI(uiId);
         if (uiNode != null) {
-            Minecraft.getInstance().setScreen(new UIRenderer(uiId, uiNode));
+            Minecraft.getInstance().setScreen(new UIRenderer(uiId, uiNode, blockPos, dimension));
         } else {
             UIJS.LOGGER.error("Failed to open UI: {}, UI node not found", uiId);
         }
@@ -80,10 +115,51 @@ public class UIRenderer extends Screen {
         // 初始化UI组件
         parseAndCreateWidgets(uiRoot, this.left, this.top);
 
+        // 解析并注册配方
+        parseRecipes(uiRoot);
+        // 添加监听器
+        if (isBlockBound()) {
+            // 方块绑定的UI使用独立的配方管理器
+            // 注意：这里需要修改监听器接口以支持方块绑定
+            // 暂时保持现有逻辑，在具体方法中处理方块绑定
+        } else {
+            recipeManager.addCompletionListener(this);
+        }
+
         // 将所有widget添加到屏幕
         for (AbstractWidget widget : widgets) {
             this.addRenderableWidget(widget);
         }
+    }
+
+    @Override
+    public void removed() {
+        super.removed();
+        // 移除监听器
+        if (!isBlockBound()) {
+            recipeManager.removeCompletionListener(this);
+        }
+    }
+
+    // 配方完成监听
+    @Override
+    public void onRecipeCompleted(String group, RecipeSystem recipe) {
+        Minecraft.getInstance().execute(() -> {
+            handleRecipeCompletion(group, recipe);
+        });
+    }
+
+    // 配方完成处理
+    @Override
+    public void onRecipeFinished(String group) {
+        Minecraft.getInstance().execute(() -> {
+            // 配方完成后重新检查是否可以开始新的配方
+            checkAndStartRecipe(group);
+            
+            // 同时检查是否可以开始后台处理
+            Map<Integer, ItemStack> slotItems = getSlotItemsForGroup(group);
+            recipeManager.checkAndStartBackgroundRecipes(group, slotItems);
+        });
     }
 
     @Override
@@ -109,6 +185,7 @@ public class UIRenderer extends Screen {
 
         // 渲染自定义节点
         renderCustomNodes(guiGraphics, uiRoot, this.left, this.top);
+        // recipeManager.updateRecipeProgress();
     }
 
     @Override
@@ -137,7 +214,7 @@ public class UIRenderer extends Screen {
         // 计算位置和尺寸
         int x = parentX + parsePosition(leftStr, this.width, 0);
         int y = parentY + parsePosition(topStr, this.height, 0);
-        System.out.println(node.toJson());
+        // System.out.println(node.toJson());
         // 根据节点类型创建对应的UI组件
         switch (node.getTagName()) {
             case "input":
@@ -500,19 +577,37 @@ public class UIRenderer extends Screen {
         int soltY = this.top + parsePosition(node.getAttributeOrStyle("top"), this.height, 0) + translate[1];
         
         // 创建物品槽组件
-        SoltWidget soltWidget = new SoltWidget(
-            soltX, soltY, 
-            soltWidth, soltHeight,
-            orderStr != null ? Integer.parseInt(orderStr) : 0,
-            bindGroup != null ? bindGroup : "",
-            node
-        );
+        SoltWidget soltWidget;
+        if (isBlockBound() && blockKey != null) {
+            soltWidget = new SoltWidget(
+                soltX, soltY, 
+                soltWidth, soltHeight,
+                orderStr != null ? Integer.parseInt(orderStr) : 0,
+                bindGroup != null ? bindGroup : "",
+                node, blockKey
+            );
+            System.out.println("Created block-bound slot: " + blockKey + " - " + bindGroup);
+        } else {
+            soltWidget = new SoltWidget(
+                soltX, soltY, 
+                soltWidth, soltHeight,
+                orderStr != null ? Integer.parseInt(orderStr) : 0,
+                bindGroup != null ? bindGroup : "",
+                node
+            );
+        }
+        
 
         if (tooltip != null && !tooltip.isEmpty()) {
             soltWidget.setTooltip(Tooltip.create(Component.literal(tooltip)));
         }
         
         widgets.add(soltWidget);
+
+        if (bindGroup != null && !bindGroup.isEmpty()) {
+            groupSlotsMap.computeIfAbsent(bindGroup, k -> new HashMap<>())
+                         .put(soltWidget.getOrder(), soltWidget);
+        }
     }
     
     // 添加物品栏组件
@@ -724,6 +819,243 @@ public class UIRenderer extends Screen {
     }
     //#endregion
 
+    //#region 配方处理
+    private void parseRecipes(MCMLNode node) {
+        for (MCMLNode child : node.getChildren()) {
+            if ("recipe".equals(child.getTagName())) {
+                parseRecipeNode(child);
+            }
+            // 递归解析子节点
+            parseRecipes(child);
+        }
+    }
+
+    private void parseRecipeNode(MCMLNode recipeNode) {
+        String recipeContent = recipeNode.getTextContent();
+        
+        List<RecipeSystem> recipes = RecipeParser.parseRecipes(recipeContent);
+        for (RecipeSystem recipe : recipes) {
+            // 添加配方到全局管理器
+            this.recipeManager.registerRecipe(recipe);
+        }
+    }
+
+    // 处理配方完成逻辑
+    private void handleRecipeCompletion(String group, RecipeSystem recipe) {
+        if (isBlockBound()) {
+            // 使用特定方块的配方管理器处理
+            handleBlockBoundRecipeCompletion(group, recipe);
+        } else {
+            // 使用物品配方管理器
+            handleItemBoundRecipeCompletion(group, recipe);
+        }
+    }
+
+    private void handleBlockBoundRecipeCompletion(String group, RecipeSystem recipe) {
+        Map<Integer, String> outputs = recipe.getOutputs();
+        
+        for (Map.Entry<Integer, String> output : outputs.entrySet()) {
+            int slotOrder = output.getKey();
+            String itemId = output.getValue();
+            int amount = recipe.getOutputAmount(slotOrder);
+            
+            setBlockBoundOutputItem(group, slotOrder, itemId, amount);
+        }
+        
+        consumeBlockBoundInputItems(group, recipe);
+        checkAndStartBlockBoundRecipe(group);
+    }
+
+    private void handleItemBoundRecipeCompletion(String group, RecipeSystem recipe) {
+        // 处理配方完成逻辑
+        Map<Integer, String> outputs = recipe.getOutputs();
+        
+        for (Map.Entry<Integer, String> output : outputs.entrySet()) {
+            int slotOrder = output.getKey();
+            String itemId = output.getValue();
+            int amount = recipe.getOutputAmount(slotOrder);
+            
+            // 找到对应的输出插槽并设置物品
+            setOutputItem(group, slotOrder, itemId, amount);
+        }
+        
+        // 消耗输入物品
+        consumeInputItems(group, recipe);
+
+        checkAndStartRecipe(group);
+    }
+    
+
+    // 设置输出物品
+    private void setOutputItem(String group, int slotOrder, String itemId, int amount) {
+        Map<Integer, SoltWidget> groupSlots = groupSlotsMap.get(group);
+        if (groupSlots != null) {
+            SoltWidget outputSlot = groupSlots.get(slotOrder);
+            if (outputSlot != null && outputSlot.isOutputSlot()) {
+                ItemStack outputItem = recipeManager.createItemStack(itemId);
+                outputItem.setCount(amount); // 设置输出数量
+                
+                if (!outputItem.isEmpty()) {
+                    ItemStack currentItem = outputSlot.getItemStack();
+                    
+                    if (currentItem.isEmpty()) {
+                        // 如果输出槽为空，直接设置新物品
+                        outputSlot.setItemStack(outputItem);
+                    } else if (ItemStack.isSameItemSameTags(currentItem, outputItem)) {
+                        // 如果输出槽已有相同物品，尝试堆叠
+                        int newCount = currentItem.getCount() + outputItem.getCount();
+                        if (newCount <= currentItem.getMaxStackSize()) {
+                            // 如果总数不超过最大堆叠数，直接增加数量
+                            currentItem.setCount(newCount);
+                            outputSlot.setItemStack(currentItem);
+                        } else {
+                            // 如果超过最大堆叠数，保持最大堆叠数
+                            currentItem.setCount(currentItem.getMaxStackSize());
+                            outputSlot.setItemStack(currentItem);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 消耗输入物品
+    private void consumeInputItems(String group, RecipeSystem recipe) {
+    Map<Integer, SoltWidget> groupSlots = groupSlotsMap.get(group);
+        if (groupSlots != null) {
+            for (Map.Entry<Integer, String> input : recipe.getInputs().entrySet()) {
+                int slotOrder = input.getKey();
+                int consumeAmount = recipe.getInputAmount(slotOrder);
+                SoltWidget inputSlot = groupSlots.get(slotOrder);
+                
+                if (inputSlot != null && inputSlot.isInputSlot()) {
+                    ItemStack currentItem = inputSlot.getItemStack();
+                    if (!currentItem.isEmpty()) {
+                        currentItem.shrink(consumeAmount); // 消耗指定数量
+                        if (currentItem.getCount() <= 0) {
+                            inputSlot.setItemStack(ItemStack.EMPTY);
+                        } else {
+                            inputSlot.setItemStack(currentItem);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 检查并开始配方
+    private void checkAndStartRecipe(String group) {
+        Map<Integer, ItemStack> slotItems = getSlotItemsForGroup(group);
+        RecipeSystem matchingRecipe = recipeManager.findMatchingRecipe(group, slotItems);
+        
+        if (matchingRecipe != null) {
+            RecipeSystem activeRecipe = recipeManager.getActiveRecipe(group);
+            if (activeRecipe == null) {
+                // 开始新的配方处理
+                recipeManager.startRecipe(group, matchingRecipe);
+            }
+        }
+    }
+
+    // 获取配方组的所有插槽物品
+    private Map<Integer, ItemStack> getSlotItemsForGroup(String group) {
+        Map<Integer, ItemStack> slotItems = new HashMap<>();
+        Map<Integer, SoltWidget> groupSlots = groupSlotsMap.get(group);
+        
+        if (groupSlots != null) {
+            for (Map.Entry<Integer, SoltWidget> entry : groupSlots.entrySet()) {
+                slotItems.put(entry.getKey(), entry.getValue().getItemStack());
+            }
+        }
+        return slotItems;
+    }
+
+    // 设置特定方块输出物品
+    private void setBlockBoundOutputItem(String group, int slotOrder, String itemId, int amount) {
+        Map<Integer, SoltWidget> groupSlots = groupSlotsMap.get(group);
+        if (groupSlots != null) {
+            SoltWidget outputSlot = groupSlots.get(slotOrder);
+            if (outputSlot != null && outputSlot.isOutputSlot()) {
+                ItemStack outputItem = createItemStack(itemId);
+                outputItem.setCount(amount);
+                
+                if (!outputItem.isEmpty()) {
+                    ItemStack currentItem = outputSlot.getItemStack();
+                    
+                    if (currentItem.isEmpty()) {
+                        outputSlot.setItemStack(outputItem);
+                    } else if (ItemStack.isSameItemSameTags(currentItem, outputItem)) {
+                        int newCount = currentItem.getCount() + outputItem.getCount();
+                        if (newCount <= currentItem.getMaxStackSize()) {
+                            currentItem.setCount(newCount);
+                            outputSlot.setItemStack(currentItem);
+                        } else {
+                            currentItem.setCount(currentItem.getMaxStackSize());
+                            outputSlot.setItemStack(currentItem);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    private void consumeBlockBoundInputItems(String group, RecipeSystem recipe) {
+        Map<Integer, SoltWidget> groupSlots = groupSlotsMap.get(group);
+        if (groupSlots != null) {
+            for (Map.Entry<Integer, String> input : recipe.getInputs().entrySet()) {
+                int slotOrder = input.getKey();
+                int consumeAmount = recipe.getInputAmount(slotOrder);
+                SoltWidget inputSlot = groupSlots.get(slotOrder);
+                
+                if (inputSlot != null && inputSlot.isInputSlot()) {
+                    ItemStack currentItem = inputSlot.getItemStack();
+                    if (!currentItem.isEmpty()) {
+                        currentItem.shrink(consumeAmount);
+                        if (currentItem.getCount() <= 0) {
+                            inputSlot.setItemStack(ItemStack.EMPTY);
+                        } else {
+                            inputSlot.setItemStack(currentItem);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    private void checkAndStartBlockBoundRecipe(String group) {
+        Map<Integer, ItemStack> slotItems = getSlotItemsForGroup(group);
+        if (blockRecipeManager != null) {
+            RecipeSystem matchingRecipe = blockRecipeManager.findMatchingRecipe(group, slotItems);
+            
+            if (matchingRecipe != null) {
+                RecipeSystem activeRecipe = blockRecipeManager.getActiveRecipe(group);
+                if (activeRecipe == null) {
+                    blockRecipeManager.startRecipe(group, matchingRecipe);
+                }
+            }
+        }
+    }
+    
+    // 修改获取配方管理器的方法
+    public Object getCurrentRecipeManager() {
+        return isBlockBound() ? blockRecipeManager : recipeManager;
+    }
+    
+    // 创建物品堆栈的辅助方法
+    private ItemStack createItemStack(String itemId) {
+        if (isBlockBound() && blockRecipeManager != null) {
+            return blockRecipeManager.createItemStack(itemId);
+        } else {
+            return recipeManager.createItemStack(itemId);
+        }
+    }
+
+
+    public Map<Integer, SoltWidget> getGroupSlots(String group) {
+        return groupSlotsMap.getOrDefault(group, new HashMap<>());
+    }
+    //#endregion
+
     // 处理按钮点击事件
     private void handleButtonClick(String onClick) {
         if (onClick != null && !onClick.isEmpty()) {
@@ -915,6 +1247,16 @@ public class UIRenderer extends Screen {
     // 根据uiId判断是否绑定了物品
     boolean isItemBound() {
         for (Map.Entry<ResourceLocation, ResourceLocation> entry : UIRegistry.ITEM_UI_BINDINGS.entrySet()) {
+            if (entry.getValue().equals(uiId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // 根据uiId判断是否绑定了方块
+    boolean isBlockBound() {
+        for (Map.Entry<ResourceLocation, ResourceLocation> entry : UIRegistry.BLOCK_UI_BINDINGS.entrySet()) {
             if (entry.getValue().equals(uiId)) {
                 return true;
             }

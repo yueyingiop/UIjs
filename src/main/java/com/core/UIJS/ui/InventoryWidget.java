@@ -285,7 +285,7 @@ public class InventoryWidget extends AbstractWidget {
         
         // 如果是当前选中的快捷栏插槽并且是物品绑定模式
         if (slotIndex == inventory.selected && slotIndex < 9 && isItemBound) {
-            borderColor = 0xFF0000;
+            borderColor = 0xFFFF0000;
         }
 
         guiGraphics.renderOutline(

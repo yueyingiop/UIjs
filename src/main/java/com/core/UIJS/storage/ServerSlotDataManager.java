@@ -3,6 +3,8 @@ package com.core.UIJS.storage;
 import java.util.HashMap;
 import java.util.Map;
 
+import com.core.UIJS.UIJS;
+
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
@@ -58,11 +60,27 @@ public class ServerSlotDataManager extends SavedData {
     }
 
     /**
+     * 保存特定方块的玩家插槽数据
+     */
+    public void savePlayerBlockSlot(ServerPlayer player, String blockKey, String slotKey, ItemStack itemStack) {
+        String fullKey = "block_" + blockKey + "_" + slotKey + "_" + player.getUUID().toString();
+        
+        if (!itemStack.isEmpty()) {
+            CompoundTag itemTag = new CompoundTag();
+            itemStack.save(itemTag);
+            slotData.put(fullKey, itemTag);
+        } else {
+            slotData.remove(fullKey);
+        }
+        
+        setDirty();
+    }
+
+    /**
      * 验证物品是否属于玩家
      */
     private boolean isItemOwnedByPlayer(ServerPlayer player, ItemStack itemStack) {
-        // 这里可以添加更复杂的验证逻辑
-        // 暂时返回true，在更高级的版本中可以验证物品来源
+        // 默认返回true
         return true;
     }
 
@@ -77,6 +95,51 @@ public class ServerSlotDataManager extends SavedData {
             return ItemStack.of(itemTag);
         }
         return ItemStack.EMPTY;
+    }
+
+    /**
+     * 加载特定方块的玩家插槽数据
+     */
+    public ItemStack loadPlayerBlockSlot(ServerPlayer player, String blockKey, String slotKey) {
+        String fullKey = "block_" + blockKey + "_" + slotKey + "_" + player.getUUID().toString();
+        if (slotData.containsKey(fullKey)) {
+            CompoundTag itemTag = slotData.get(fullKey);
+            ItemStack itemStack = ItemStack.of(itemTag);
+            return itemStack;
+        }
+        return ItemStack.EMPTY;
+    }
+
+    /**
+     * 获取玩家所有方块插槽数据
+     */
+    public CompoundTag getPlayerBlockSlotData(ServerPlayer player) {
+        CompoundTag blockData = new CompoundTag();
+        String playerUUID = player.getUUID().toString();
+        
+        for (Map.Entry<String, CompoundTag> entry : slotData.entrySet()) {
+            String key = entry.getKey();
+            // 查找属于该玩家的方块插槽数据
+            if (key.startsWith("block_") && key.endsWith("_" + playerUUID)) {
+                // 提取blockKey和slotKey
+                // 格式: block_{blockKey}_{slotKey}_{playerUUID}
+                String middlePart = key.substring(6, key.length() - (playerUUID.length() + 1));
+                String[] parts = middlePart.split("_", 2);
+                if (parts.length == 2) {
+                    String blockKey = parts[0];
+                    String slotKey = parts[1];
+                    
+                    // 确保使用正确的格式：blockKey_slotKey（不使用斜杠）
+                    String fullSlotKey = blockKey + "_" + slotKey;
+                    blockData.put(fullSlotKey, entry.getValue().copy());
+                    
+                    UIJS.LOGGER.debug("Preparing block data for sync: {} -> {}", fullSlotKey, ItemStack.of(entry.getValue()));
+                }
+            }
+        }
+        
+        UIJS.LOGGER.info("Prepared {} block slot entries for player {}", blockData.getAllKeys().size(), player.getScoreboardName());
+        return blockData;
     }
 
     /**
@@ -97,6 +160,40 @@ public class ServerSlotDataManager extends SavedData {
     }
 
     /**
+     * 从服务器数据恢复方块插槽数据
+     */
+    public static void restoreBlockSlotDataFromServer(CompoundTag blockSlotData) {
+        if (blockSlotData != null) {
+            for (String fullSlotKey : blockSlotData.getAllKeys()) {
+                CompoundTag itemTag = blockSlotData.getCompound(fullSlotKey);
+                if (itemTag != null && !itemTag.isEmpty()) {
+                    // 解析完整的插槽键：blockKey_slotKey
+                    String[] parts = fullSlotKey.split("_", 2);
+                    if (parts.length == 2) {
+                        String blockKey = parts[0];
+                        String slotKey = parts[1];
+                        
+                        // 解析slotKey中的type, order, bindGroup
+                        String[] slotParts = slotKey.split("_");
+                        if (slotParts.length >= 3) {
+                            // 保存到方块数据管理器
+                            ItemStack itemStack = ItemStack.of(itemTag);
+                            BlockBoundSlotDataManager.saveBlockSlot(blockKey, slotKey, itemStack);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 获取特定方块的所有插槽数据
+     */
+    public static Map<String, ItemStack> getBlockSlotData(String blockKey) {
+        return BlockBoundSlotDataManager.getBlockSlots(blockKey);
+    }
+
+    /**
      * 静态方法：保存玩家插槽数据
      */
     public static void save(ServerPlayer player, String slotKey, ItemStack itemStack) {
@@ -110,5 +207,29 @@ public class ServerSlotDataManager extends SavedData {
     public static ItemStack load(ServerPlayer player, String slotKey) {
         ServerSlotDataManager manager = get(player);
         return manager.loadPlayerSlot(player, slotKey);
+    }
+
+    /**
+     * 静态方法：保存特定方块绑定的玩家插槽数据
+     */
+    public static void saveBlockSlot(ServerPlayer player, String blockKey, String slotKey, ItemStack itemStack) {
+        ServerSlotDataManager manager = get(player);
+        manager.savePlayerBlockSlot(player, blockKey, slotKey, itemStack);
+    }
+
+    /**
+     * 静态方法：保存特定方块绑定的玩家插槽数据
+     */
+    public static ItemStack loadBlockSlot(ServerPlayer player, String blockKey, String slotKey) {
+        ServerSlotDataManager manager = get(player);
+        return manager.loadPlayerBlockSlot(player, blockKey, slotKey);
+    }
+
+    /**
+     * 静态方法：获取玩家所有方块插槽数据
+     */
+    public static CompoundTag getBlockSlotData(ServerPlayer player) {
+        ServerSlotDataManager manager = get(player);
+        return manager.getPlayerBlockSlotData(player);
     }
 }
